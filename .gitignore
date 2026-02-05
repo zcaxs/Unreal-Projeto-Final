@@ -72,3 +72,7 @@ Plugins/**/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+/ProjetoFinal/.idea
+/ProjetoFinal/Intermediate
+/ProjetoFinal/Saved
+/ProjetoFinal/Saved
