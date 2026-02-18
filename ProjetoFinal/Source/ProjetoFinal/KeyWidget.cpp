@@ -3,6 +3,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 
 void UKeyWidget::NativeConstruct()
 {
@@ -21,51 +22,76 @@ void UKeyWidget::NativeConstruct()
     // Try to bind immediately
     RefreshInventoryBinding();
     
-    // Also keep trying every second until we get the inventory
-    GetWorld()->GetTimerManager().SetTimer(RefreshTimerHandle, this, 
-        &UKeyWidget::RefreshInventoryBinding, 0.5f, true);
+    // Also keep trying every half-second until we get the inventory
+    if (GetWorld())
+    {
+        GetWorld()->GetTimerManager().SetTimer(RefreshTimerHandle, this, 
+            &UKeyWidget::RefreshInventoryBinding, 0.5f, true);
+    }
 }
 
 void UKeyWidget::NativeDestruct()
 {
-    GetWorld()->GetTimerManager().ClearTimer(RefreshTimerHandle);
+    if (GetWorld())
+    {
+        GetWorld()->GetTimerManager().ClearTimer(RefreshTimerHandle);
+    }
     Super::NativeDestruct();
 }
 
 void UKeyWidget::RefreshInventoryBinding()
 {
-    APlayerController* PC = GetOwningPlayer();
-    if (!PC) 
+    // Guard world
+    UWorld* World = GetWorld();
+    if (!World)
     {
-        UE_LOG(LogTemp, Warning, TEXT("KEYWIDGET: No player controller yet"));
+        UE_LOG(LogTemp, Warning, TEXT("KEYWIDGET: No world yet"));
         return;
     }
 
-    ACharacter* Character = PC->GetCharacter();
-    if (!Character) 
+    // Try to get the owning pawn first (works for Character or Pawn)
+    APawn* Pawn = nullptr;
+    if (APlayerController* PC = GetOwningPlayer())
     {
-        UE_LOG(LogTemp, Warning, TEXT("KEYWIDGET: No character yet"));
+        Pawn = PC->GetPawn();
+    }
+
+    // Fallback to player pawn index 0
+    if (!Pawn)
+    {
+        Pawn = UGameplayStatics::GetPlayerPawn(World, 0);
+    }
+
+    if (!Pawn)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("KEYWIDGET: No pawn/player yet"));
         return;
     }
 
-    UKeyInventoryComponent* Inventory = Character->FindComponentByClass<UKeyInventoryComponent>();
-    if (!Inventory) 
+    UKeyInventoryComponent* Inventory = Pawn->FindComponentByClass<UKeyInventoryComponent>();
+    if (!Inventory)
     {
-        UE_LOG(LogTemp, Warning, TEXT("KEYWIDGET: No inventory component yet"));
+        UE_LOG(LogTemp, Warning, TEXT("KEYWIDGET: No inventory component found on %s"), *Pawn->GetName());
         return;
     }
 
     // Found inventory! Clear timer and bind
-    GetWorld()->GetTimerManager().ClearTimer(RefreshTimerHandle);
-    
-    // Remove old binding if exists
+    World->GetTimerManager().ClearTimer(RefreshTimerHandle);
+
+    // Remove old binding if exists then add new binding
     Inventory->OnKeyCountChanged.RemoveDynamic(this, &UKeyWidget::OnKeyCountChanged);
-    // Add new binding
     Inventory->OnKeyCountChanged.AddDynamic(this, &UKeyWidget::OnKeyCountChanged);
     
-    UE_LOG(LogTemp, Warning, TEXT("KEYWIDGET: Successfully bound to inventory"));
-    
-    // Force an immediate update
+    UE_LOG(LogTemp, Warning, TEXT("KEYWIDGET: Successfully bound to inventory on %s for KeyID=%s"), 
+        *Pawn->GetName(), *KeyID.ToString());
+
+    // If we have a key icon texture configured, set it now
+    if (KeyIcon && KeyIconTexture)
+    {
+        KeyIcon->SetBrushFromTexture(KeyIconTexture);
+    }
+
+    // Force an immediate update using the current count (this ensures we don't miss keys added before bind)
     int32 CurrentCount = Inventory->GetKeyCount(KeyID);
     OnKeyCountChanged(KeyID, CurrentCount);
 }
@@ -74,11 +100,15 @@ void UKeyWidget::OnKeyCountChanged(FName UpdatedKeyID, int32 NewCount)
 {
     if (UpdatedKeyID != KeyID) return;
 
-    UE_LOG(LogTemp, Warning, TEXT("KEYWIDGET: Updating %s to %d"), *KeyID.ToString(), NewCount);
+    UE_LOG(LogTemp, Warning, TEXT("KEYWIDGET: Updating KeyID=%s to %d"), *KeyID.ToString(), NewCount);
 
-    if (KeyIcon && KeyIconTexture)
+    if (KeyIcon)
     {
-        KeyIcon->SetBrushFromTexture(KeyIconTexture);
+        // Only set brush if a texture was provided
+        if (KeyIconTexture)
+        {
+            KeyIcon->SetBrushFromTexture(KeyIconTexture);
+        }
         KeyIcon->SetVisibility(NewCount > 0 ? ESlateVisibility::Visible : ESlateVisibility::Hidden);
     }
 
